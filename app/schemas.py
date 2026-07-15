@@ -100,6 +100,79 @@ LISTING_INPUT_WARNING_RESPONSE_EXAMPLE = {
     "reason_if_none": "현재 요청에는 사업 설명 또는 타깃 고객 정보, 지역 특성 정보, 예산 또는 운영 기간 정보, 후보 매물 상세 정보가 부족합니다. 매물의 주소, 가격, 면적, 시설 같은 정보도 함께 보내주시면 더 정확하게 추천해드릴 수 있어요.",
 }
 
+CHAT_LISTING_RECOMMENDATION_REQUEST_EXAMPLE = {
+    "message": "비건 디저트 팝업을 하고 싶은데 성수 쪽에 맞는 공간 추천해줘",
+    "listings": [
+        {
+            "listing_id": "101",
+            "title": "성수 1층 쇼룸",
+            "address": "서울 성동구 성수이로 00",
+            "detail_address": "1층",
+            "price_per_day": 200000,
+            "deposit": 1000000,
+            "area_sqm": 42.0,
+            "summary": "전면 노출이 좋은 쇼룸형 팝업 공간",
+            "facilities": ["조명", "와이파이"],
+            "restrictions": ["취사 불가"],
+            "hashtags": ["#성수", "#1층"],
+            "available_from": "2026-07-20",
+            "available_to": "2026-08-31",
+        }
+    ],
+}
+
+CHAT_LISTING_RECOMMENDATION_RESPONSE_EXAMPLE = {
+    "assistant_message": "비건 디저트 팝업에 맞는 공간 2곳을 골랐어요.",
+    "recommended_listings": [
+        {
+            "listing_id": "101",
+            "title": "성수 1층 쇼룸",
+            "fit_score": 91,
+            "summary": "브랜딩형 디저트 팝업에 적합한 공간입니다.",
+            "match_reasons": ["유동인구 성격과 맞음", "쇼룸형 연출 가능"],
+            "caution_points": ["주말 경쟁 가능성"],
+        }
+    ],
+    "reason_if_none": None,
+}
+
+CHAT_BUSINESS_ITEM_REQUEST_EXAMPLE = {
+    "message": "연남에서 하면 잘 될 팝업 아이템 추천해줘",
+}
+
+CHAT_BUSINESS_ITEM_RESPONSE_EXAMPLE = {
+    "assistant_message": "연남에서는 감성 소비와 체험형 요소가 있는 팝업이 잘 맞아요.",
+    "recommended_items": [
+        {
+            "item_name": "핸드메이드 디저트 체험 팝업",
+            "fit_score": 89,
+            "summary": "연남 상권 특성과 잘 맞는 아이템입니다.",
+            "reasons": ["산책형 유입과 잘 맞음", "SNS 확산에 유리함"],
+            "execution_tips": ["체험존 구성", "한정판 운영"],
+        }
+    ],
+}
+
+CHAT_MARKETING_REQUEST_EXAMPLE = {
+    "message": "성수에서 여는 미니 선풍기 팝업 홍보 문구 만들어줘",
+}
+
+CHAT_MARKETING_RESPONSE_EXAMPLE = {
+    "assistant_message": "바로 쓸 수 있게 홍보 문구를 정리했어요.",
+    "campaign_summary": "성수 방문객을 겨냥한 여름 시즌 팝업 캠페인입니다.",
+    "target_hook": "더위를 식혀줄 감성 미니 선풍기 팝업",
+    "recommended_schedule": ["오픈 5일 전 인스타 예고", "오픈 2일 전 상세 소개"],
+    "contents": [
+        {
+            "channel": "instagram",
+            "headline": "성수에서 만나는 여름 미니 선풍기 팝업",
+            "primary_copy": "이번 주말, 성수에서 시원한 감성을 만나보세요.",
+            "bullet_points": ["휴대성", "디자인", "한정 수량"],
+            "hashtags": ["#성수팝업", "#미니선풍기"],
+        }
+    ],
+}
+
 REGION_RECOMMENDATION_REQUEST_EXAMPLE = {
     "business_item": "비건 디저트 팝업",
     "business_description": "20대 여성 대상, 감성 브랜딩 중심",
@@ -308,6 +381,21 @@ class ListingRecommendationResponse(BaseModel):
     reason_if_none: Optional[str] = None
 
 
+class ChatListingRecommendationRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": CHAT_LISTING_RECOMMENDATION_REQUEST_EXAMPLE})
+
+    message: str = Field(default="", max_length=4000, description="프론트에서 그대로 전달하는 사용자 자연어 메시지")
+    listings: list[ListingCandidate] = Field(default_factory=list, description="백엔드가 전달하는 전체 모집중 매물 목록")
+
+
+class ChatListingRecommendationResponse(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": CHAT_LISTING_RECOMMENDATION_RESPONSE_EXAMPLE})
+
+    assistant_message: str = Field(..., min_length=1, description="추천 결과 또는 추가 질문을 담은 답변")
+    recommended_listings: Optional[list[ListingRecommendationItem]] = Field(default=None, min_length=1, max_length=3)
+    reason_if_none: Optional[str] = None
+
+
 class BusinessItemRecommendationRequest(BaseModel):
     model_config = ConfigDict(json_schema_extra={"example": BUSINESS_ITEM_RECOMMENDATION_REQUEST_EXAMPLE})
 
@@ -336,6 +424,27 @@ class BusinessItemRecommendationResponse(BaseModel):
 
     area_summary: str
     recommended_items: list[BusinessItemRecommendation]
+
+
+class ChatBusinessItemRecommendationRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": CHAT_BUSINESS_ITEM_REQUEST_EXAMPLE})
+
+    message: str = Field(default="", max_length=4000, description="프론트에서 그대로 전달하는 사용자 자연어 메시지")
+
+
+class ChatBusinessItemRecommendation(BaseModel):
+    item_name: str
+    fit_score: int = Field(..., ge=0, le=100)
+    summary: str
+    reasons: list[str]
+    execution_tips: list[str]
+
+
+class ChatBusinessItemRecommendationResponse(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": CHAT_BUSINESS_ITEM_RESPONSE_EXAMPLE})
+
+    assistant_message: str = Field(..., min_length=1, description="추천 결과 또는 추가 질문을 담은 답변")
+    recommended_items: Optional[list[ChatBusinessItemRecommendation]] = Field(default=None, min_length=1, max_length=5)
 
 
 class MarketingAutomationRequest(BaseModel):
@@ -370,6 +479,22 @@ class MarketingAutomationResponse(BaseModel):
     target_hook: str
     recommended_schedule: list[str]
     contents: list[MarketingChannelContent]
+
+
+class ChatMarketingRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": CHAT_MARKETING_REQUEST_EXAMPLE})
+
+    message: str = Field(default="", max_length=4000, description="프론트에서 그대로 전달하는 사용자 자연어 메시지")
+
+
+class ChatMarketingResponse(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": CHAT_MARKETING_RESPONSE_EXAMPLE})
+
+    assistant_message: str = Field(..., min_length=1, description="생성 결과 또는 추가 질문을 담은 답변")
+    campaign_summary: Optional[str] = None
+    target_hook: Optional[str] = None
+    recommended_schedule: list[str] = Field(default_factory=list)
+    contents: list[MarketingChannelContent] = Field(default_factory=list)
 
 
 class HealthResponse(BaseModel):

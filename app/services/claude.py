@@ -8,6 +8,12 @@ from app.config import settings
 from app.schemas import (
     BusinessItemRecommendationRequest,
     BusinessItemRecommendationResponse,
+    ChatBusinessItemRecommendationRequest,
+    ChatBusinessItemRecommendationResponse,
+    ChatListingRecommendationRequest,
+    ChatListingRecommendationResponse,
+    ChatMarketingRequest,
+    ChatMarketingResponse,
     ListingRecommendationRequest,
     ListingRecommendationResponse,
     ListingCandidate,
@@ -75,6 +81,48 @@ class ClaudeRecommendationService:
         response = ListingRecommendationResponse.model_validate(data)
         return self._normalize_listing_recommendations(payload, response)
 
+    async def chat_recommend_listings(
+        self, payload: ChatListingRecommendationRequest
+    ) -> ChatListingRecommendationResponse:
+        input_warning = self._build_chat_listing_input_warning_response(payload)
+        if input_warning is not None:
+            return input_warning
+
+        response_schema = {
+            "assistant_message": "사용자에게 보여줄 자연스러운 한국어 답변. 추천 결과 또는 추가 질문을 1~3문장으로 안내",
+            "recommended_listings": [
+                {
+                    "listing_id": "listing-001",
+                    "title": "추천 매물명",
+                    "fit_score": 91,
+                    "summary": "이 매물이 왜 맞는지 한 줄 요약",
+                    "match_reasons": ["추천 이유 1", "추천 이유 2"],
+                    "caution_points": ["주의 포인트 1", "주의 포인트 2"],
+                }
+            ],
+            "reason_if_none": None,
+        }
+
+        prompt = self._build_prompt(
+            task_name="자연어 기반 매물 추천",
+            task_description=(
+                "프론트에서 전달한 사용자 message와 전체 매물 목록을 보고 가장 적합한 공간을 추천해 주세요. "
+                "message 안에 들어 있는 지역, 업종, 예산, 운영 방식, 시설 선호, 기간, 톤 등의 의미는 모두 스스로 해석해야 합니다. "
+                "추천할 때는 전체 매물 중 최대 3개만 고르고, 추천 이유와 주의점을 함께 작성하세요. "
+                "recommended_listings에는 입력으로 받은 listings 안의 listing_id만 사용할 수 있고, 존재하지 않는 매물은 절대 만들면 안 됩니다. "
+                "사용자 의도가 어느 정도 파악되면 일부 정보가 부족해도 합리적으로 추론해 추천할 수 있습니다. "
+                "다만 추천 근거가 너무 약하거나 비교에 필요한 정보가 부족하면 422처럼 실패하지 말고 assistant_message로 짧게 되물어 주세요. "
+                "이 경우 recommended_listings는 null로, reason_if_none에는 어떤 정보가 더 필요하거나 왜 지금은 추천이 어려운지 구체적으로 작성하세요. "
+                "조건에 맞는 공간이 실제로 없다면 억지 추천하지 말고 recommended_listings를 null로 반환하세요."
+            ),
+            request_data=payload.model_dump(mode="json"),
+            response_schema=response_schema,
+        )
+
+        data = await self._request_json(prompt)
+        response = ChatListingRecommendationResponse.model_validate(data)
+        return self._normalize_chat_listing_recommendations(payload, response)
+
     def _build_listing_input_warning_response(
         self, payload: ListingRecommendationRequest
     ) -> Optional[ListingRecommendationResponse]:
@@ -123,6 +171,32 @@ class ClaudeRecommendationService:
             ),
         )
 
+    def _build_chat_listing_input_warning_response(
+        self, payload: ChatListingRecommendationRequest
+    ) -> Optional[ChatListingRecommendationResponse]:
+        if not payload.message.strip():
+            return ChatListingRecommendationResponse(
+                assistant_message="어떤 팝업을 하고 싶은지 한 문장으로 알려주시면, 전체 매물 중에서 맞는 공간을 골라드릴게요.",
+                recommended_listings=None,
+                reason_if_none="사용자 message가 비어 있어 업종, 지역, 예산, 운영 목적을 해석할 수 없습니다.",
+            )
+
+        if not payload.listings:
+            return ChatListingRecommendationResponse(
+                assistant_message="추천은 가능하지만 지금은 비교할 매물 목록이 없어요. 모집 중인 매물 요약본을 함께 보내주시면 바로 골라드릴게요.",
+                recommended_listings=None,
+                reason_if_none="비교 대상이 되는 listings 데이터가 없어 추천 결과를 만들 수 없습니다.",
+            )
+
+        if all(self._is_listing_too_sparse(candidate) for candidate in payload.listings):
+            return ChatListingRecommendationResponse(
+                assistant_message="매물은 받았지만 비교에 필요한 정보가 조금 더 있으면 정확도가 훨씬 좋아져요. 주소, 가격, 면적, 시설 같은 요약 정보를 더 보내주실 수 있을까요?",
+                recommended_listings=None,
+                reason_if_none="모든 매물 정보가 매우 간략해 공간 적합도를 안정적으로 비교하기 어렵습니다.",
+            )
+
+        return None
+
     def _is_listing_too_sparse(self, candidate: ListingCandidate) -> bool:
         detail_count = 0
 
@@ -158,6 +232,40 @@ class ClaudeRecommendationService:
         normalized = []
 
         for item in recommendations[: payload.desired_count]:
+            candidate = candidates_by_id.get(item.listing_id)
+            if candidate is None:
+                raise ClaudeServiceError(f"후보 목록에 없는 매물이 반환되었습니다: {item.listing_id}")
+            if item.listing_id in seen_ids:
+                continue
+
+            seen_ids.add(item.listing_id)
+            normalized.append(item.model_copy(update={"title": candidate.title}))
+
+        if not normalized:
+            raise ClaudeServiceError("유효한 추천 매물이 반환되지 않았습니다.")
+
+        return response.model_copy(
+            update={
+                "recommended_listings": normalized,
+                "reason_if_none": None,
+            }
+        )
+
+    def _normalize_chat_listing_recommendations(
+        self,
+        payload: ChatListingRecommendationRequest,
+        response: ChatListingRecommendationResponse,
+    ) -> ChatListingRecommendationResponse:
+        recommendations = response.recommended_listings
+
+        if recommendations is None:
+            return response
+
+        candidates_by_id = {candidate.listing_id: candidate for candidate in payload.listings}
+        seen_ids: set[str] = set()
+        normalized = []
+
+        for item in recommendations[:3]:
             candidate = candidates_by_id.get(item.listing_id)
             if candidate is None:
                 raise ClaudeServiceError(f"후보 목록에 없는 매물이 반환되었습니다: {item.listing_id}")
@@ -237,6 +345,45 @@ class ClaudeRecommendationService:
         data = await self._request_json(prompt)
         return BusinessItemRecommendationResponse.model_validate(data)
 
+    async def chat_recommend_business_items(
+        self, payload: ChatBusinessItemRecommendationRequest
+    ) -> ChatBusinessItemRecommendationResponse:
+        if not payload.message.strip():
+            return ChatBusinessItemRecommendationResponse(
+                assistant_message="어느 지역이나 상권을 생각하고 있는지 한 문장으로 알려주시면, 그 분위기에 맞는 팝업 아이템을 추천해드릴게요.",
+                recommended_items=None,
+            )
+
+        response_schema = {
+            "assistant_message": "사용자에게 보여줄 자연스러운 한국어 답변. 추천 결과 또는 추가 질문을 1~3문장으로 안내",
+            "recommended_items": [
+                {
+                    "item_name": "추천 사업 아이템",
+                    "fit_score": 89,
+                    "summary": "연남 상권 특성과 잘 맞는 아이템입니다.",
+                    "reasons": ["추천 이유 1", "추천 이유 2"],
+                    "execution_tips": ["실행 팁 1", "실행 팁 2"],
+                }
+            ],
+        }
+
+        prompt = self._build_prompt(
+            task_name="자연어 기반 상권별 창업 아이템 추천",
+            task_description=(
+                "사용자 message만 보고 지역 또는 상권, 업종 선호, 예산 뉘앙스, 운영 목적을 해석한 뒤 그 지역에 잘 맞는 팝업 또는 창업 아이템을 추천해 주세요. "
+                "핵심은 상권 분위기, 유입 동선, 체류 성격, SNS 확산 가능성, 충동구매 적합도를 함께 고려하는 것입니다. "
+                "message에 지역이 비교적 명확하면 1~5개의 아이템을 추천하고, 각 아이템마다 이유와 실행 팁을 적어 주세요. "
+                "지역이나 상권이 불명확해 유의미한 추천이 어렵다면 422처럼 실패하지 말고 assistant_message로 짧게 되물어 주세요. "
+                "이 경우 recommended_items는 null로 반환하세요. "
+                "정보가 조금 부족해도 일반적인 상권 특성을 바탕으로 추론 가능한 범위에서는 먼저 추천해도 됩니다."
+            ),
+            request_data=payload.model_dump(mode="json"),
+            response_schema=response_schema,
+        )
+
+        data = await self._request_json(prompt)
+        return ChatBusinessItemRecommendationResponse.model_validate(data)
+
     async def generate_marketing_plan(self, payload: MarketingAutomationRequest) -> MarketingAutomationResponse:
         response_schema = {
             "campaign_summary": "캠페인 요약 문자열",
@@ -265,6 +412,50 @@ class ClaudeRecommendationService:
 
         data = await self._request_json(prompt)
         return MarketingAutomationResponse.model_validate(data)
+
+    async def generate_chat_marketing_plan(self, payload: ChatMarketingRequest) -> ChatMarketingResponse:
+        if not payload.message.strip():
+            return ChatMarketingResponse(
+                assistant_message="홍보할 상품이나 팝업, 그리고 가능하면 지역까지 한 문장으로 알려주시면 바로 마케팅 문구를 만들어드릴게요.",
+                campaign_summary=None,
+                target_hook=None,
+                recommended_schedule=[],
+                contents=[],
+            )
+
+        response_schema = {
+            "assistant_message": "사용자에게 보여줄 자연스러운 한국어 답변. 결과 안내 또는 추가 질문을 1~3문장으로 작성",
+            "campaign_summary": "캠페인 요약 문자열 또는 정보 부족 시 null",
+            "target_hook": "핵심 소구 포인트 또는 정보 부족 시 null",
+            "recommended_schedule": ["일정 제안 1", "일정 제안 2"],
+            "contents": [
+                {
+                    "channel": "instagram",
+                    "headline": "채널용 헤드라인",
+                    "primary_copy": "채널 본문",
+                    "bullet_points": ["포인트 1", "포인트 2"],
+                    "hashtags": ["태그1", "태그2"],
+                }
+            ],
+        }
+
+        prompt = self._build_prompt(
+            task_name="자연어 기반 마케팅 문구 생성",
+            task_description=(
+                "사용자 message 한 문장만 보고 상품, 지역, 톤앤매너, 타깃 고객, 목적을 해석해서 바로 쓸 수 있는 마케팅 초안을 만들어 주세요. "
+                "assistant_message에는 무엇을 준비했는지 자연스럽게 안내하고, campaign_summary에는 전체 캠페인 방향을 요약하세요. "
+                "target_hook에는 한 줄 핵심 소구 포인트를 작성하고, recommended_schedule에는 오픈 전후 운영 일정을 2~6개 제안하세요. "
+                "contents에는 채널별 문구를 1~4개 제안하되 headline, primary_copy, bullet_points, hashtags를 모두 채워 주세요. "
+                "정보가 조금 부족해도 일반적인 팝업 홍보 전제를 두고 먼저 초안을 만들어도 됩니다. "
+                "다만 상품 또는 지역 또는 홍보 목적이 거의 드러나지 않아 유의미한 초안이 어렵다면 422처럼 실패하지 말고 assistant_message로 짧게 되물어 주세요. "
+                "이 경우 campaign_summary와 target_hook은 null로, recommended_schedule과 contents는 빈 배열로 반환하세요."
+            ),
+            request_data=payload.model_dump(mode="json"),
+            response_schema=response_schema,
+        )
+
+        data = await self._request_json(prompt)
+        return ChatMarketingResponse.model_validate(data)
 
     async def _request_json(self, prompt: str) -> dict:
         result = await self._send_message(prompt)

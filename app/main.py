@@ -6,8 +6,20 @@ from app.config import settings
 from app.schemas import (
     BUSINESS_ITEM_RECOMMENDATION_REQUEST_EXAMPLE,
     BUSINESS_ITEM_RECOMMENDATION_RESPONSE_EXAMPLE,
+    CHAT_BUSINESS_ITEM_REQUEST_EXAMPLE,
+    CHAT_BUSINESS_ITEM_RESPONSE_EXAMPLE,
+    CHAT_LISTING_RECOMMENDATION_REQUEST_EXAMPLE,
+    CHAT_LISTING_RECOMMENDATION_RESPONSE_EXAMPLE,
+    CHAT_MARKETING_REQUEST_EXAMPLE,
+    CHAT_MARKETING_RESPONSE_EXAMPLE,
     BusinessItemRecommendationRequest,
     BusinessItemRecommendationResponse,
+    ChatBusinessItemRecommendationRequest,
+    ChatBusinessItemRecommendationResponse,
+    ChatListingRecommendationRequest,
+    ChatListingRecommendationResponse,
+    ChatMarketingRequest,
+    ChatMarketingResponse,
     HealthResponse,
     HEALTH_RESPONSE_EXAMPLE,
     LISTING_INPUT_WARNING_RESPONSE_EXAMPLE,
@@ -31,6 +43,8 @@ APP_DESCRIPTION = """
 KOLPOP AI API는 로컬 상권 팝업 플랫폼을 위한 Claude 기반 추천/마케팅 백엔드입니다.
 
 - 채팅형 매물 추천
+- 채팅형 창업 아이템 추천
+- 채팅형 마케팅 문구 생성
 - 사업 아이템 기반 지역 추천
 - 상권 기반 팝업 아이템 추천
 - 채널별 마케팅 문구 자동 생성
@@ -45,7 +59,7 @@ OPENAPI_TAGS = [
     },
     {
         "name": "chat",
-        "description": "프론트 채팅 UI에서 사용하는 대화형 매물 추천 API입니다.",
+        "description": "프론트 채팅 UI에서 사용하는 message 중심 추천/마케팅 API입니다.",
     },
     {
         "name": "recommendation",
@@ -141,45 +155,6 @@ async def health_check() -> HealthResponse:
         },
     },
 )
-@app.post(
-    "/api/v1/chat/listings/",
-    response_model=ListingRecommendationResponse,
-    tags=["chat"],
-    include_in_schema=False,
-)
-@app.post(
-    "/api/v1/chat/listings",
-    response_model=ListingRecommendationResponse,
-    tags=["chat"],
-    summary="채팅형 매물 추천",
-    description=(
-        "프론트 채팅 UI에서 사용하는 매물 추천 API입니다. "
-        "assistant_message는 말풍선용 텍스트, recommended_listings는 카드 렌더링용 데이터입니다."
-    ),
-    responses={
-        200: {
-            "description": "채팅형 매물 추천 성공",
-            "content": {
-                "application/json": {
-                    "examples": {
-                        "success": {
-                            "summary": "추천 성공 예시",
-                            "value": LISTING_RECOMMENDATION_RESPONSE_EXAMPLE,
-                        },
-                        "warning": {
-                            "summary": "입력 정보가 부족한 경우 안내 예시",
-                            "value": LISTING_INPUT_WARNING_RESPONSE_EXAMPLE,
-                        },
-                    }
-                }
-            },
-        },
-        502: {
-            "description": "Claude API 호출 실패 또는 모델/키 설정 오류",
-            "content": {"application/json": {"example": UPSTREAM_ERROR_EXAMPLE}},
-        },
-    },
-)
 async def recommend_listings(
     payload: ListingRecommendationRequest = Body(
         ...,
@@ -194,6 +169,67 @@ async def recommend_listings(
 ) -> ListingRecommendationResponse:
     try:
         return await service.recommend_listings(payload)
+    except ClaudeServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/v1/chat/listings/",
+    response_model=ChatListingRecommendationResponse,
+    tags=["chat"],
+    include_in_schema=False,
+)
+@app.post(
+    "/api/v1/chat/listings",
+    response_model=ChatListingRecommendationResponse,
+    tags=["chat"],
+    summary="채팅형 매물 추천",
+    description=(
+        "프론트에서 전달한 message와 전체 모집중 매물 목록만으로 Claude가 적합한 매물을 고르는 API입니다. "
+        "message 안의 지역, 업종, 예산, 기간 같은 의미 해석은 AI 서버가 담당합니다."
+    ),
+    responses={
+        200: {
+            "description": "채팅형 매물 추천 성공",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "success": {
+                            "summary": "추천 성공 예시",
+                            "value": CHAT_LISTING_RECOMMENDATION_RESPONSE_EXAMPLE,
+                        },
+                        "warning": {
+                            "summary": "추가 정보 요청 예시",
+                            "value": {
+                                "assistant_message": "지금 정보만으로도 일부 추론은 가능하지만, 운영 예산이나 선호 시설이 있으면 더 정확하게 골라드릴 수 있어요.",
+                                "recommended_listings": None,
+                                "reason_if_none": "사용자 의도는 파악되지만 비교 기준이 더 있으면 추천 정확도가 높아집니다.",
+                            },
+                        },
+                    }
+                }
+            },
+        },
+        502: {
+            "description": "Claude API 호출 실패 또는 모델/키 설정 오류",
+            "content": {"application/json": {"example": UPSTREAM_ERROR_EXAMPLE}},
+        },
+    },
+)
+async def chat_recommend_listings(
+    payload: ChatListingRecommendationRequest = Body(
+        default=ChatListingRecommendationRequest(),
+        description="사용자 자연어 message와 전체 매물 목록",
+        openapi_examples={
+            "basic": {
+                "summary": "프론트 연동용 매물 추천 예시",
+                "value": CHAT_LISTING_RECOMMENDATION_REQUEST_EXAMPLE,
+            }
+        },
+    )
+) -> ChatListingRecommendationResponse:
+    try:
+        return await service.chat_recommend_listings(payload)
     except ClaudeServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -285,6 +321,50 @@ async def recommend_business_items(
 
 
 @app.post(
+    "/api/v1/chat/business-items/",
+    response_model=ChatBusinessItemRecommendationResponse,
+    tags=["chat"],
+    include_in_schema=False,
+)
+@app.post(
+    "/api/v1/chat/business-items",
+    response_model=ChatBusinessItemRecommendationResponse,
+    tags=["chat"],
+    summary="채팅형 창업 아이템 추천",
+    description=(
+        "사용자 message에서 지역 또는 상권을 해석해 그곳에 맞는 팝업/창업 아이템을 추천하는 API입니다. "
+        "정보가 모자라면 422 대신 assistant_message로 추가 질문을 반환합니다."
+    ),
+    responses={
+        200: {
+            "description": "채팅형 사업 아이템 추천 성공",
+            "content": {"application/json": {"example": CHAT_BUSINESS_ITEM_RESPONSE_EXAMPLE}},
+        },
+        502: {
+            "description": "Claude API 호출 실패 또는 모델/키 설정 오류",
+            "content": {"application/json": {"example": UPSTREAM_ERROR_EXAMPLE}},
+        },
+    },
+)
+async def chat_recommend_business_items(
+    payload: ChatBusinessItemRecommendationRequest = Body(
+        default=ChatBusinessItemRecommendationRequest(),
+        description="사용자 자연어 message",
+        openapi_examples={
+            "basic": {
+                "summary": "프론트 연동용 사업 아이템 추천 예시",
+                "value": CHAT_BUSINESS_ITEM_REQUEST_EXAMPLE,
+            }
+        },
+    ),
+) -> ChatBusinessItemRecommendationResponse:
+    try:
+        return await service.chat_recommend_business_items(payload)
+    except ClaudeServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post(
     "/api/v1/marketing/automation/",
     response_model=MarketingAutomationResponse,
     response_model_exclude_none=True,
@@ -323,5 +403,48 @@ async def marketing_automation(
 ) -> MarketingAutomationResponse:
     try:
         return await service.generate_marketing_plan(payload)
+    except ClaudeServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/v1/chat/marketing/",
+    response_model=ChatMarketingResponse,
+    tags=["chat"],
+    include_in_schema=False,
+)
+@app.post(
+    "/api/v1/chat/marketing",
+    response_model=ChatMarketingResponse,
+    tags=["chat"],
+    summary="채팅형 마케팅 문구 생성",
+    description=(
+        "사용자 한 문장을 받아 상품, 지역, 톤, 목적을 해석하고 마케팅 문구와 채널별 카피, 운영 일정을 생성합니다."
+    ),
+    responses={
+        200: {
+            "description": "채팅형 마케팅 초안 생성 성공",
+            "content": {"application/json": {"example": CHAT_MARKETING_RESPONSE_EXAMPLE}},
+        },
+        502: {
+            "description": "Claude API 호출 실패 또는 모델/키 설정 오류",
+            "content": {"application/json": {"example": UPSTREAM_ERROR_EXAMPLE}},
+        },
+    },
+)
+async def chat_marketing(
+    payload: ChatMarketingRequest = Body(
+        default=ChatMarketingRequest(),
+        description="사용자 자연어 message",
+        openapi_examples={
+            "basic": {
+                "summary": "프론트 연동용 마케팅 생성 예시",
+                "value": CHAT_MARKETING_REQUEST_EXAMPLE,
+            }
+        },
+    )
+) -> ChatMarketingResponse:
+    try:
+        return await service.generate_chat_marketing_plan(payload)
     except ClaudeServiceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
