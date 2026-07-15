@@ -103,6 +103,12 @@ async def health_check() -> HealthResponse:
 
 
 @app.post(
+    "/api/v1/recommend/listings/",
+    response_model=ListingRecommendationResponse,
+    tags=["recommendation"],
+    include_in_schema=False,
+)
+@app.post(
     "/api/v1/recommend/listings",
     response_model=ListingRecommendationResponse,
     tags=["recommendation"],
@@ -134,6 +140,12 @@ async def health_check() -> HealthResponse:
             "content": {"application/json": {"example": UPSTREAM_ERROR_EXAMPLE}},
         },
     },
+)
+@app.post(
+    "/api/v1/chat/listings/",
+    response_model=ListingRecommendationResponse,
+    tags=["chat"],
+    include_in_schema=False,
 )
 @app.post(
     "/api/v1/chat/listings",
@@ -187,6 +199,13 @@ async def recommend_listings(
 
 
 @app.post(
+    "/api/v1/recommend/regions/",
+    response_model=RegionRecommendationResponse,
+    response_model_exclude_none=True,
+    tags=["recommendation"],
+    include_in_schema=False,
+)
+@app.post(
     "/api/v1/recommend/regions",
     response_model=RegionRecommendationResponse,
     response_model_exclude_none=True,
@@ -223,6 +242,13 @@ async def recommend_regions(
 
 
 @app.post(
+    "/api/v1/recommend/business-items/",
+    response_model=BusinessItemRecommendationResponse,
+    response_model_exclude_none=True,
+    tags=["recommendation"],
+    include_in_schema=False,
+)
+@app.post(
     "/api/v1/recommend/business-items",
     response_model=BusinessItemRecommendationResponse,
     response_model_exclude_none=True,
@@ -258,6 +284,13 @@ async def recommend_business_items(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@app.post(
+    "/api/v1/marketing/automation/",
+    response_model=MarketingAutomationResponse,
+    response_model_exclude_none=True,
+    tags=["marketing"],
+    include_in_schema=False,
+)
 @app.post(
     "/api/v1/marketing/automation",
     response_model=MarketingAutomationResponse,
