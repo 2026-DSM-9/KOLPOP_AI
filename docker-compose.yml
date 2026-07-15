@@ -1,0 +1,14 @@
+services:
+  kolpop_ai:
+    container_name: kolpop_ai-app
+    image: ${AI_IMAGE:-pjmlove08/kolpop_ai:latest}
+    build:
+      context: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+    ports:
+      - "127.0.0.1:8000:8000"
